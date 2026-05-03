@@ -15,6 +15,43 @@ $user_id   = $_SESSION['user_id'];
 $full_name = $_SESSION['full_name'];
 $first_name = explode(' ', $full_name)[0];
 
+// ── AJAX handlers ──────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    if ($_POST['action'] === 'toggle_favorite') {
+        $pet_id = (int)$_POST['pet_id'];
+        $check = mysqli_query($conn, "SELECT favorite_id FROM favorites WHERE user_id=$user_id AND pet_id=$pet_id");
+        if (mysqli_num_rows($check) > 0) {
+            mysqli_query($conn, "DELETE FROM favorites WHERE user_id=$user_id AND pet_id=$pet_id");
+            echo json_encode(['status' => 'removed']);
+        } else {
+            mysqli_query($conn, "INSERT INTO favorites (user_id, pet_id) VALUES ($user_id, $pet_id)");
+            echo json_encode(['status' => 'added']);
+        }
+        exit;
+    }
+    if ($_POST['action'] === 'cancel_application') {
+        $app_id = (int)$_POST['application_id'];
+        $check = mysqli_query($conn,
+            "SELECT application_id FROM adoption_applications
+             WHERE application_id=$app_id AND user_id=$user_id AND status='pending'"
+        );
+        if (mysqli_num_rows($check) > 0) {
+            mysqli_query($conn, "UPDATE adoption_applications SET status='cancelled' WHERE application_id=$app_id");
+            echo json_encode(['status' => 'cancelled']);
+        } else {
+            echo json_encode(['status' => 'error']);
+        }
+        exit;
+    }
+    exit;
+}
+
+// ── Fetch favorites ────────────────────────────────────────────
+$fav_result = mysqli_query($conn, "SELECT pet_id FROM favorites WHERE user_id=$user_id");
+$my_favorites = [];
+while ($f = mysqli_fetch_assoc($fav_result)) $my_favorites[] = $f['pet_id'];
+
 // ── Fetch available pets ───────────────────────────────────────
 $pets = mysqli_query($conn,
     "SELECT * FROM pets WHERE status = 'available' ORDER BY created_at DESC LIMIT 6"
@@ -47,6 +84,15 @@ $total_approved = mysqli_fetch_row($r)[0];
 
 $r = mysqli_query($conn, "SELECT COUNT(*) FROM adoption_applications WHERE user_id = $user_id AND status = 'pending'");
 $total_pending = mysqli_fetch_row($r)[0];
+
+function petBadges($pet) {
+    $b = '<span class="pet-badge badge-available">✅ Available</span>';
+    if (!empty($pet['is_vaccinated']))  $b .= '<span class="pet-badge badge-vaccinated">💉 Vaccinated</span>';
+    if (!empty($pet['is_neutered']))    $b .= '<span class="pet-badge badge-neutered">✂️ Neutered</span>';
+    if (!empty($pet['good_with_kids'])) $b .= '<span class="pet-badge badge-kids">👶 Good with Kids</span>';
+    return $b;
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -284,16 +330,12 @@ $total_pending = mysqli_fetch_row($r)[0];
         .pet-body { padding: 1rem 1.1rem; }
         .pet-name { font-size: 1rem; font-weight: 800; color: var(--text-dark); margin-bottom: 0.2rem; }
         .pet-meta { font-size: 0.78rem; color: var(--text-muted); font-weight: 600; }
-        .pet-badge {
-            display: inline-block;
-            background: #E8F5E9;
-            color: #2E7D32;
-            font-size: 0.7rem;
-            font-weight: 800;
-            padding: 0.2rem 0.6rem;
-            border-radius: 50px;
-            margin-top: 0.5rem;
-        }
+        .badges-wrap{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.5rem;}
+        .pet-badge{display:inline-block;font-size:.68rem;font-weight:800;padding:.18rem .55rem;border-radius:50px;white-space:nowrap;}
+        .badge-available{background:#E8F5E9;color:#2E7D32;}
+        .badge-vaccinated{background:#E3F2FD;color:#1565C0;}
+        .badge-neutered{background:#F3E5F5;color:#6A1B9A;}
+        .badge-kids{background:#FFF8E1;color:#E65100;}
         .btn-adopt {
             display: block;
             width: 100%;
@@ -763,9 +805,93 @@ footer.footer-visible {
     opacity: 1;
     transform: translateY(0);
 }
+
+/* ── Pet card position fix for overlays ── */
+.pet-card { position: relative; }
+.pet-img { position: relative; overflow: hidden; }
+
+/* ── Favorite button ── */
+.fav-btn{position:absolute;top:.55rem;right:.55rem;width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.92);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1rem;transition:all .2s;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.12);}
+.fav-btn:hover{transform:scale(1.15);background:#fff;}
+.fav-btn i{color:#BCAAA4;transition:color .2s;}
+.fav-btn.active i{color:#E53935;}
+
+/* ── Quick-view hover button ── */
+.quickview-btn{position:absolute;top:.55rem;left:.55rem;height:28px;padding:0 .65rem;border-radius:50px;background:rgba(255,255,255,.92);border:none;cursor:pointer;display:flex;align-items:center;gap:.3rem;font-size:.72rem;font-weight:800;color:var(--orange);transition:all .2s;z-index:2;font-family:'Nunito',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);opacity:0;}
+.pet-card:hover .quickview-btn{opacity:1;}
+.quickview-btn:hover{background:var(--orange);color:#fff;}
+
+/* ── Quick-view modal ── */
+.qv-overlay{display:none;position:fixed;inset:0;background:rgba(62,39,35,.5);z-index:1000;align-items:center;justify-content:center;backdrop-filter:blur(4px);}
+.qv-overlay.open{display:flex;}
+.qv-modal{background:#fff;border-radius:20px;max-width:680px;width:calc(100% - 2rem);max-height:90vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.2);animation:modalPop .28s ease;}
+@keyframes modalPop{from{opacity:0;transform:scale(.92) translateY(16px);}to{opacity:1;transform:scale(1) translateY(0);}}
+.qv-modal-inner{position:relative;}
+.qv-img-wrap{width:100%;height:260px;background:#F5EDE7;display:flex;align-items:center;justify-content:center;font-size:5rem;border-radius:20px 20px 0 0;overflow:hidden;}
+.qv-img-wrap img{width:100%;height:260px;object-fit:cover;}
+.qv-body{padding:1.5rem 1.8rem 1.8rem;}
+.qv-name{font-size:1.5rem;font-weight:800;color:var(--text-dark);font-family:'Baloo 2',cursive;}
+.qv-meta{font-size:.88rem;color:var(--text-muted);font-weight:600;margin-bottom:.8rem;}
+.qv-desc{font-size:.88rem;color:var(--text-dark);line-height:1.65;margin-bottom:1rem;}
+.qv-close{position:absolute;top:1rem;right:1rem;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.9);border:none;font-size:1.1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-dark);transition:all .18s;z-index:5;}
+.qv-close:hover{background:#fff;transform:scale(1.1);}
+.qv-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:1rem;}
+.qv-info-item{background:#FFF8F4;border-radius:10px;padding:.6rem .8rem;}
+.qv-info-label{font-size:.68rem;font-weight:800;color:var(--brown-light);text-transform:uppercase;letter-spacing:.5px;}
+.qv-info-value{font-size:.9rem;font-weight:700;color:var(--text-dark);margin-top:2px;}
+.qv-actions{display:flex;gap:.8rem;margin-top:1.2rem;}
+.qv-btn-adopt{flex:1;background:var(--orange);color:#fff;border:none;border-radius:12px;padding:.75rem 1rem;font-weight:800;font-size:.95rem;font-family:'Baloo 2',cursive;cursor:pointer;text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:.4rem;transition:background .2s;}
+.qv-btn-adopt:hover{background:var(--orange-dark);color:#fff;}
+.qv-btn-fav{width:48px;height:48px;border-radius:12px;border:1.5px solid #F0E6DE;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.2rem;transition:all .2s;flex-shrink:0;}
+.qv-btn-fav:hover{border-color:#E53935;background:#FFEBEE;}
+.qv-btn-fav i{color:#BCAAA4;}
+.qv-btn-fav.active{border-color:#E53935;background:#FFEBEE;}
+.qv-btn-fav.active i{color:#E53935;}
+
+/* ── Cancel button ── */
+.btn-cancel-app{background:none;border:1.5px solid #FFCDD2;color:#C62828;border-radius:8px;font-size:.75rem;font-weight:800;padding:.25rem .65rem;cursor:pointer;font-family:'Nunito',sans-serif;transition:all .18s;display:inline-flex;align-items:center;gap:.3rem;}
+.btn-cancel-app:hover{background:#FFEBEE;border-color:#C62828;}
+
+/* ── Rejection note ── */
+.rejection-note{background:#FFF3E0;border-left:3px solid #FF7043;border-radius:0 8px 8px 0;padding:.4rem .7rem;font-size:.78rem;color:var(--text-muted);font-weight:600;max-width:220px;}
+.rejection-note strong{color:var(--orange);display:block;font-size:.7rem;margin-bottom:.15rem;}
+
+/* ── Timeline ── */
+.timeline-wrap{display:flex;align-items:flex-start;}
+.tl-step{display:flex;flex-direction:column;align-items:center;position:relative;flex:1;}
+.tl-step:not(:last-child)::after{content:'';position:absolute;top:10px;left:50%;width:100%;height:2px;background:#EDE0D8;z-index:0;}
+.tl-step.done:not(:last-child)::after{background:#4CAF50;}
+.tl-step.active:not(:last-child)::after{background:#FFE0B2;}
+.tl-dot{width:20px;height:20px;border-radius:50%;z-index:1;border:2.5px solid #EDE0D8;background:#fff;display:flex;align-items:center;justify-content:center;font-size:.55rem;transition:all .2s;}
+.tl-step.done .tl-dot{background:#4CAF50;border-color:#4CAF50;color:#fff;}
+.tl-step.active .tl-dot{background:var(--orange);border-color:var(--orange);color:#fff;}
+.tl-step.rejected .tl-dot{background:#E53935;border-color:#E53935;color:#fff;}
+.tl-step.cancelled .tl-dot{background:#9E9E9E;border-color:#9E9E9E;color:#fff;}
+.tl-label{font-size:.6rem;font-weight:800;color:var(--brown-light);margin-top:4px;white-space:nowrap;text-align:center;}
+.tl-step.done .tl-label{color:#2E7D32;}
+.tl-step.active .tl-label{color:var(--orange);}
+.tl-step.rejected .tl-label{color:#C62828;}
+.tl-step.cancelled .tl-label{color:#757575;}
+
+/* ── Toast ── */
+.toast-wrap{position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;display:flex;flex-direction:column;gap:.5rem;}
+.toast-msg{background:#3E2723;color:#fff;border-radius:12px;padding:.75rem 1.1rem;font-size:.85rem;font-weight:700;display:flex;align-items:center;gap:.5rem;box-shadow:0 8px 24px rgba(0,0,0,.15);animation:fadeInUp .3s ease;}
+.toast-msg.error{background:#C62828;}
+.toast-msg.success{background:#2E7D32;}
+
 </style>
 </head>
 <body>
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- Quick-view modal -->
+<div class="qv-overlay" id="qv-overlay" onclick="closeQuickView(event)">
+  <div class="qv-modal">
+    <div class="qv-modal-inner" id="qv-content"></div>
+  </div>
+</div>
 
 <!-- ══ NAVBAR ══ -->
 <nav class="navbar">
@@ -852,25 +978,28 @@ footer.footer-visible {
             <?php
             // Reset pointer
             mysqli_data_seek($pets, 0);
-            while ($pet = mysqli_fetch_assoc($pets)):
-            ?>
-            <div class="pet-card">
-                <div class="pet-img">
-                    <?php if (!empty($pet['image_path'])): ?>
-                        <img src="<?= htmlspecialchars($pet['image_path']) ?>" alt="<?= htmlspecialchars($pet['name']) ?>">
-                    <?php else: ?>
-                        <?= $pet['species'] === 'Cat' ? '🐱' : '🐶' ?>
-                    <?php endif; ?>
-                </div>
-                <div class="pet-body">
-                    <div class="pet-name"><?= htmlspecialchars($pet['name']) ?></div>
-                    <div class="pet-meta"><?= htmlspecialchars($pet['species']) ?> · <?= htmlspecialchars($pet['breed'] ?? 'Mixed') ?> · <?= $pet['gender'] === 'male' ? '♂' : '♀' ?></div>
-                    <div class="pet-meta"><?= $pet['age_years'] ?>y <?= $pet['age_months'] ?>m old</div>
-                    <span class="pet-badge">✅ Available</span>
-                </div>
-                <a href="adopt.php?pet_id=<?= $pet['pet_id'] ?>" class="btn-adopt"><i class="bi bi-heart-fill me-1"></i> Adopt Me</a>
-            </div>
-            <?php endwhile; ?>
+         while ($pet = mysqli_fetch_assoc($pets)):
+    $is_fav = in_array($pet['pet_id'], $my_favorites);
+?>
+<div class="pet-card" data-pet='<?= htmlspecialchars(json_encode($pet), ENT_QUOTES) ?>'>
+    <div class="pet-img">
+        <button class="quickview-btn" onclick="openQuickView(this)"><i class="bi bi-eye-fill"></i> Quick View</button>
+        <button class="fav-btn <?= $is_fav ? 'active' : '' ?>" data-pet-id="<?= $pet['pet_id'] ?>" onclick="toggleFav(event,this,<?= $pet['pet_id'] ?>)"><i class="bi bi-heart-fill"></i></button>
+        <?php if (!empty($pet['image_path'])): ?>
+            <img src="<?= htmlspecialchars($pet['image_path']) ?>" alt="<?= htmlspecialchars($pet['name']) ?>">
+        <?php else: ?>
+            <?= $pet['species'] === 'Cat' ? '🐱' : '🐶' ?>
+        <?php endif; ?>
+    </div>
+    <div class="pet-body">
+        <div class="pet-name"><?= htmlspecialchars($pet['name']) ?></div>
+        <div class="pet-meta"><?= htmlspecialchars($pet['species']) ?> · <?= htmlspecialchars($pet['breed'] ?? 'Mixed') ?> · <?= $pet['gender'] === 'male' ? '♂' : '♀' ?></div>
+        <div class="pet-meta"><?= $pet['age_years'] ?>y <?= $pet['age_months'] ?>m old</div>
+        <div class="badges-wrap"><?= petBadges($pet) ?></div>
+    </div>
+    <a href="adopt.php?pet_id=<?= $pet['pet_id'] ?>" class="btn-adopt"><i class="bi bi-heart-fill me-1"></i> Adopt Me</a>
+</div>
+<?php endwhile; ?>
         </div>
 
     </div>
@@ -967,35 +1096,40 @@ footer.footer-visible {
         foreach ($all_pets_data as $pet):
             $age_months_total = ($pet['age_years'] * 12) + $pet['age_months'];
         ?>
-        <div class="pet-card"
-             data-name="<?= strtolower(htmlspecialchars($pet['name'])) ?>"
-             data-breed="<?= strtolower(htmlspecialchars($pet['breed'] ?? '')) ?>"
-             data-species="<?= htmlspecialchars($pet['species']) ?>"
-             data-gender="<?= htmlspecialchars($pet['gender']) ?>"
-             data-age-months="<?= $age_months_total ?>"
-             data-created="<?= strtotime($pet['created_at']) ?>"
-        >
-            <div class="pet-img">
-                <?php if (!empty($pet['image_path'])): ?>
-                    <img src="<?= htmlspecialchars($pet['image_path']) ?>" alt="<?= htmlspecialchars($pet['name']) ?>">
-                <?php else: ?>
-                    <?= $pet['species'] === 'Cat' ? '🐱' : ($pet['species'] === 'Dog' ? '🐶' : '🐾') ?>
-                <?php endif; ?>
-            </div>
-            <div class="pet-body">
-                <div class="pet-name"><?= htmlspecialchars($pet['name']) ?></div>
-                <div class="pet-meta"><?= htmlspecialchars($pet['species']) ?> · <?= htmlspecialchars($pet['breed'] ?? 'Mixed') ?> · <?= $pet['gender'] === 'male' ? '♂ Male' : '♀ Female' ?></div>
-                <div class="pet-meta"><?= $pet['age_years'] ?>y <?= $pet['age_months'] ?>m old</div>
-                <?php if (!empty($pet['description'])): ?>
-                    <div class="pet-meta" style="margin-top:0.4rem;color:var(--text-muted)"><?= htmlspecialchars(substr($pet['description'], 0, 72)) ?>…</div>
-                <?php endif; ?>
-                <span class="pet-badge">✅ Available</span>
-            </div>
-            <a href="adopt.php?pet_id=<?= $pet['pet_id'] ?>" class="btn-adopt"><i class="bi bi-heart-fill me-1"></i> Adopt Me</a>
-        </div>
-        <?php endforeach; ?>
+        <?php $is_fav = in_array($pet['pet_id'], $my_favorites); ?>
+    <div class="pet-card"
+     data-name="<?= strtolower(htmlspecialchars($pet['name'])) ?>"
+     data-breed="<?= strtolower(htmlspecialchars($pet['breed'] ?? '')) ?>"
+     data-species="<?= htmlspecialchars($pet['species']) ?>"
+     data-gender="<?= htmlspecialchars($pet['gender']) ?>"
+     data-age-months="<?= $age_months_total ?>"
+     data-created="<?= strtotime($pet['created_at']) ?>"
+     data-pet='<?= htmlspecialchars(json_encode($pet), ENT_QUOTES) ?>'
+>
+    <div class="pet-img">
+        <button class="quickview-btn" onclick="openQuickView(this)"><i class="bi bi-eye-fill"></i> Quick View</button>
+        <button class="fav-btn <?= $is_fav ? 'active' : '' ?>" data-pet-id="<?= $pet['pet_id'] ?>" onclick="toggleFav(event,this,<?= $pet['pet_id'] ?>)"><i class="bi bi-heart-fill"></i></button>
+        <?php if (!empty($pet['image_path'])): ?>
+            <img src="<?= htmlspecialchars($pet['image_path']) ?>" alt="<?= htmlspecialchars($pet['name']) ?>">
+        <?php else: ?>
+            <?= $pet['species'] === 'Cat' ? '🐱' : ($pet['species'] === 'Dog' ? '🐶' : '🐾') ?>
+        <?php endif; ?>
     </div>
- 
+    <div class="pet-body">
+        <div class="pet-name"><?= htmlspecialchars($pet['name']) ?></div>
+        <div class="pet-meta"><?= htmlspecialchars($pet['species']) ?> · <?= htmlspecialchars($pet['breed'] ?? 'Mixed') ?> · <?= $pet['gender'] === 'male' ? '♂ Male' : '♀ Female' ?></div>
+        <div class="pet-meta"><?= $pet['age_years'] ?>y <?= $pet['age_months'] ?>m old</div>
+        <?php if (!empty($pet['description'])): ?>
+            <div class="pet-meta" style="margin-top:0.4rem;color:var(--text-muted)"><?= htmlspecialchars(substr($pet['description'], 0, 72)) ?>…</div>
+        <?php endif; ?>
+        <div class="badges-wrap"><?= petBadges($pet) ?></div>
+    </div>
+ <a href="adopt.php?pet_id=<?= $pet['pet_id'] ?>" class="btn-adopt"><i class="bi bi-heart-fill me-1"></i> Adopt Me</a>
+</div>
+<?php endforeach; ?>
+
+    </div><!-- /.pets-grid #pet-grid -->
+
     <!-- Empty state (shown when no results) -->
     <div class="empty-state" id="no-results" style="display:none">
         <i class="bi bi-search" style="font-size:2.5rem;display:block;margin-bottom:0.5rem;color:#E8D8CC"></i>
@@ -1004,8 +1138,8 @@ footer.footer-visible {
         <br><br>
         <button onclick="clearAllFilters()" style="color:var(--orange);font-weight:700;background:none;border:none;cursor:pointer;font-size:0.9rem">Clear all filters →</button>
     </div>
- 
-</div>
+
+</div><!-- /.tab-pets -->
 
     <!-- ══ MY APPLICATIONS TAB ══ -->
     <div id="tab-applications" class="tab-panel">
@@ -1024,39 +1158,90 @@ footer.footer-visible {
             <div style="overflow-x:auto">
             <table>
                 <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Pet</th>
-                        <th>Species</th>
-                        <th>Status</th>
-                        <th>Applied</th>
-                        <th>Reviewed</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php
-                    mysqli_data_seek($my_apps, 0);
-                    while ($app = mysqli_fetch_assoc($my_apps)):
-                    ?>
-                    <tr>
-                        <td style="color:var(--brown-light);font-size:0.78rem"><?= $app['application_id'] ?></td>
-                        <td>
-                            <?php if (!empty($app['image_path'])): ?>
-                                <img src="<?= htmlspecialchars($app['image_path']) ?>" style="width:34px;height:34px;border-radius:8px;object-fit:cover;margin-right:0.5rem;vertical-align:middle">
-                            <?php else: ?>
-                                <span style="font-size:1.2rem;margin-right:0.5rem"><?= $app['species'] === 'Cat' ? '🐱' : '🐶' ?></span>
-                            <?php endif; ?>
-                            <strong><?= htmlspecialchars($app['pet_name']) ?></strong>
-                        </td>
-                        <td style="color:var(--text-muted)"><?= htmlspecialchars($app['species']) ?></td>
-                        <td><span class="badge-<?= $app['status'] ?>"><?= ucfirst($app['status']) ?></span></td>
-                        <td style="color:var(--text-muted);white-space:nowrap"><?= date('M j, Y', strtotime($app['applied_at'])) ?></td>
-                        <td style="color:var(--text-muted);white-space:nowrap">
-                            <?= $app['reviewed_at'] ? date('M j, Y', strtotime($app['reviewed_at'])) : '—' ?>
-                        </td>
-                    </tr>
-                    <?php endwhile; ?>
-                </tbody>
+    <tr>
+        <th>#</th><th>Pet</th><th>Species</th><th>Status</th>
+        <th>Timeline</th><th>Notes</th><th>Applied</th><th>Action</th>
+    </tr>
+</thead>
+<tbody>
+    <?php
+    mysqli_data_seek($my_apps, 0);
+    while ($app = mysqli_fetch_assoc($my_apps)):
+        $st = $app['status'];
+        $s1 = 'done';
+        $s2 = 'pending-tl';
+        $s3 = 'pending-tl';
+        if ($st === 'pending')    { $s2 = 'active'; }
+        elseif ($st === 'approved')  { $s2 = 'done'; $s3 = 'done'; }
+        elseif ($st === 'rejected')  { $s2 = 'done'; $s3 = 'rejected'; }
+        elseif ($st === 'cancelled') { $s2 = 'cancelled'; $s3 = 'cancelled'; }
+    ?>
+    <tr id="app-row-<?= $app['application_id'] ?>">
+        <td style="color:var(--brown-light);font-size:.78rem"><?= $app['application_id'] ?></td>
+        <td>
+            <?php if (!empty($app['image_path'])): ?>
+                <img src="<?= htmlspecialchars($app['image_path']) ?>" style="width:34px;height:34px;border-radius:8px;object-fit:cover;margin-right:.5rem;vertical-align:middle">
+            <?php else: ?>
+                <span style="font-size:1.2rem;margin-right:.5rem"><?= $app['species'] === 'Cat' ? '🐱' : '🐶' ?></span>
+            <?php endif; ?>
+            <strong><?= htmlspecialchars($app['pet_name']) ?></strong>
+        </td>
+        <td style="color:var(--text-muted)"><?= htmlspecialchars($app['species']) ?></td>
+        <td><span class="badge-<?= $st ?>"><?= ucfirst($st) ?></span></td>
+        <td style="min-width:170px">
+            <div class="timeline-wrap">
+                <div class="tl-step <?= $s1 ?>">
+                    <div class="tl-dot"><i class="bi bi-check-lg" style="font-size:.6rem"></i></div>
+                    <span class="tl-label">Applied</span>
+                </div>
+                <div class="tl-step <?= $s2 ?>">
+                    <div class="tl-dot">
+                        <?php if ($s2 === 'active'): ?><i class="bi bi-clock-fill" style="font-size:.55rem"></i>
+                        <?php elseif ($s2 === 'done'): ?><i class="bi bi-check-lg" style="font-size:.6rem"></i>
+                        <?php elseif ($s2 === 'cancelled'): ?><i class="bi bi-x-lg" style="font-size:.55rem"></i>
+                        <?php else: ?><i class="bi bi-dash" style="font-size:.6rem"></i><?php endif; ?>
+                    </div>
+                    <span class="tl-label">Review</span>
+                </div>
+                <div class="tl-step <?= $s3 ?>">
+                    <div class="tl-dot">
+                        <?php if ($s3 === 'done'): ?><i class="bi bi-check-lg" style="font-size:.6rem"></i>
+                        <?php elseif ($s3 === 'rejected'): ?><i class="bi bi-x-lg" style="font-size:.55rem"></i>
+                        <?php elseif ($s3 === 'cancelled'): ?><i class="bi bi-x-lg" style="font-size:.55rem"></i>
+                        <?php else: ?><i class="bi bi-dash" style="font-size:.6rem"></i><?php endif; ?>
+                    </div>
+                    <span class="tl-label">Decision</span>
+                </div>
+            </div>
+        </td>
+        <td style="min-width:160px">
+            <?php if (!empty($app['admin_notes'])): ?>
+                <div class="rejection-note">
+                    <strong><?= $st === 'rejected' ? '❌ Reason' : 'ℹ️ Note' ?></strong>
+                    <?= htmlspecialchars($app['admin_notes']) ?>
+                </div>
+            <?php else: ?>
+                <span style="color:#D7CCC8;font-size:.8rem">—</span>
+            <?php endif; ?>
+        </td>
+        <td style="color:var(--text-muted);white-space:nowrap;font-size:.82rem">
+            <?= date('M j, Y', strtotime($app['applied_at'])) ?>
+            <?php if ($app['reviewed_at']): ?>
+                <div style="font-size:.72rem;color:#BCAAA4;margin-top:2px">Reviewed <?= date('M j', strtotime($app['reviewed_at'])) ?></div>
+            <?php endif; ?>
+        </td>
+        <td>
+            <?php if ($st === 'pending'): ?>
+                <button class="btn-cancel-app" onclick="cancelApplication(<?= $app['application_id'] ?>, this)">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            <?php else: ?>
+                <span style="color:#D7CCC8;font-size:.8rem">—</span>
+            <?php endif; ?>
+        </td>
+    </tr>
+    <?php endwhile; ?>
+</tbody>
             </table>
             </div>
             <?php endif; ?>
@@ -1396,6 +1581,142 @@ const footerObserver = new IntersectionObserver((entries) => {
 }, { threshold: 0.1 });
 
 footerObserver.observe(footer);
+
+// ── Toast ──────────────────────────────────────────────────────
+function showToast(msg, type = 'success') {
+    const wrap = document.getElementById('toast-wrap');
+    const el = document.createElement('div');
+    el.className = 'toast-msg' + (type === 'error' ? ' error' : type === 'success' ? ' success' : '');
+    el.innerHTML = (type === 'success' ? '✅ ' : '❌ ') + msg;
+    wrap.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+}
+
+// ── Favourite toggle ───────────────────────────────────────────
+function toggleFav(e, btn, petId) {
+    e.stopPropagation();
+    e.preventDefault();
+    const wasActive = btn.classList.contains('active');
+    document.querySelectorAll('.fav-btn[data-pet-id="' + petId + '"], .qv-btn-fav[data-pet-id="' + petId + '"]')
+        .forEach(b => b.classList.toggle('active', !wasActive));
+    fetch('dashboard.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'action=toggle_favorite&pet_id=' + petId
+    })
+    .then(r => r.json())
+    .then(d => {
+        showToast(d.status === 'added' ? 'Added to wishlist ❤️' : 'Removed from wishlist');
+    })
+    .catch(() => {
+        document.querySelectorAll('.fav-btn[data-pet-id="' + petId + '"], .qv-btn-fav[data-pet-id="' + petId + '"]')
+            .forEach(b => b.classList.toggle('active', wasActive));
+        showToast('Something went wrong', 'error');
+    });
+}
+
+// ── Quick-view modal ───────────────────────────────────────────
+function openQuickView(btn) {
+    event.stopPropagation();
+    event.preventDefault();
+    const card = btn.closest('.pet-card');
+    const pet  = JSON.parse(card.dataset.pet);
+    const isFav = card.querySelector('.fav-btn').classList.contains('active');
+    const gender = pet.gender === 'male' ? '♂ Male' : '♀ Female';
+    const age    = pet.age_years + 'y ' + pet.age_months + 'm';
+
+    let badges = '<span style="background:#E8F5E9;color:#2E7D32;font-size:.72rem;font-weight:800;padding:.2rem .6rem;border-radius:50px;">✅ Available</span>';
+    if (pet.is_vaccinated == 1)  badges += ' <span style="background:#E3F2FD;color:#1565C0;font-size:.72rem;font-weight:800;padding:.2rem .6rem;border-radius:50px;">💉 Vaccinated</span>';
+    if (pet.is_neutered == 1)    badges += ' <span style="background:#F3E5F5;color:#6A1B9A;font-size:.72rem;font-weight:800;padding:.2rem .6rem;border-radius:50px;">✂️ Neutered</span>';
+    if (pet.good_with_kids == 1) badges += ' <span style="background:#FFF8E1;color:#E65100;font-size:.72rem;font-weight:800;padding:.2rem .6rem;border-radius:50px;">👶 Good with Kids</span>';
+
+    const imgHtml = pet.image_path
+        ? `<img src="${pet.image_path}" alt="${pet.name}">`
+        : (pet.species === 'Cat' ? '🐱' : (pet.species === 'Dog' ? '🐶' : '🐾'));
+
+    document.getElementById('qv-content').innerHTML = `
+        <button class="qv-close" onclick="document.getElementById('qv-overlay').classList.remove('open');document.body.style.overflow=''">
+            <i class="bi bi-x-lg"></i>
+        </button>
+        <div class="qv-img-wrap">${imgHtml}</div>
+        <div class="qv-body">
+            <div class="qv-name">${pet.name}</div>
+            <div class="qv-meta">${pet.species} · ${pet.breed || 'Mixed'} · ${gender} · ${age} old</div>
+            <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.9rem">${badges}</div>
+            ${pet.description ? `<div class="qv-desc">${pet.description}</div>` : ''}
+            <div class="qv-info-grid">
+                <div class="qv-info-item"><div class="qv-info-label">Species</div><div class="qv-info-value">${pet.species}</div></div>
+                <div class="qv-info-item"><div class="qv-info-label">Breed</div><div class="qv-info-value">${pet.breed || 'Mixed'}</div></div>
+                <div class="qv-info-item"><div class="qv-info-label">Gender</div><div class="qv-info-value">${gender}</div></div>
+                <div class="qv-info-item"><div class="qv-info-label">Age</div><div class="qv-info-value">${age}</div></div>
+            </div>
+            <div class="qv-actions">
+                <a href="adopt.php?pet_id=${pet.pet_id}" class="qv-btn-adopt"><i class="bi bi-heart-fill"></i> Adopt Me</a>
+                <button class="qv-btn-fav ${isFav ? 'active' : ''}" data-pet-id="${pet.pet_id}"
+                        onclick="toggleFav(event, this, ${pet.pet_id})">
+                    <i class="bi bi-heart-fill"></i>
+                </button>
+            </div>
+        </div>`;
+
+    document.getElementById('qv-overlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeQuickView(e) {
+    if (e && e.target !== document.getElementById('qv-overlay')) return;
+    document.getElementById('qv-overlay').classList.remove('open');
+    document.body.style.overflow = '';
+}
+
+// Escape key closes modal
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        document.getElementById('qv-overlay').classList.remove('open');
+        document.body.style.overflow = '';
+    }
+});
+
+// ── Cancel application ─────────────────────────────────────────
+function cancelApplication(appId, btn) {
+    if (!confirm('Cancel this application? This cannot be undone.')) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Cancelling…';
+    fetch('dashboard.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'action=cancel_application&application_id=' + appId
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status === 'cancelled') {
+            showToast('Application cancelled');
+            const row = document.getElementById('app-row-' + appId);
+            const badge = row.querySelector('[class^="badge-"]');
+            badge.className = 'badge-cancelled';
+            badge.textContent = 'Cancelled';
+            btn.parentElement.innerHTML = '<span style="color:#D7CCC8;font-size:.8rem">—</span>';
+            const steps = row.querySelectorAll('.tl-step');
+            if (steps[1]) {
+                steps[1].className = 'tl-step cancelled';
+                steps[1].querySelector('.tl-dot').innerHTML = '<i class="bi bi-x-lg" style="font-size:.55rem"></i>';
+            }
+            if (steps[2]) {
+                steps[2].className = 'tl-step cancelled';
+                steps[2].querySelector('.tl-dot').innerHTML = '<i class="bi bi-x-lg" style="font-size:.55rem"></i>';
+            }
+        } else {
+            showToast('Could not cancel', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-x-circle"></i> Cancel';
+        }
+    })
+    .catch(() => {
+        showToast('Something went wrong', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-x-circle"></i> Cancel';
+    });
+}
 
 </script>
 </body>

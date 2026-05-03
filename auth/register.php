@@ -126,7 +126,7 @@ if (isset($conn)) {
             gap: 3px;
         }
         .cell { background-size: cover; background-position: center; }
-        .cell-1 { background-image: url('https://images.unsplash.com/photo-1548767797-d8c844163c4a?w=800&q=80'); grid-column: span 2; }
+        .cell-1 {  background-image: url('https://images.unsplash.com/photo-1601758228041-f3b2795255f1?w=800&q=80'); grid-column: span 2; }
         .cell-2 { background-image: url('https://images.unsplash.com/photo-1574158622682-e40e69881006?w=600&q=80'); }
         .cell-3 { background-image: url('https://images.unsplash.com/photo-1425082661705-1834bfd09dca?w=600&q=80'); }
         .cell-4 { background-image: url('https://images.unsplash.com/photo-1552053831-71594a27632d?w=600&q=80'); }
@@ -150,7 +150,7 @@ if (isset($conn)) {
             color: #fff; text-decoration: none;
             display: flex; align-items: center; gap: 0.5rem;
         }
-        .brand-link img { height: 40px; filter: brightness(0) invert(1); }
+        .brand-link img { height: 100px; filter: none;}
 
         .panel-quote h2 {
             font-size: clamp(1.35rem, 2vw, 2rem);

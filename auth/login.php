@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($user['role'] === 'adopter') {
             header('Location: ../dashboard.php');
         } else {
-            header('Location: ../admin/dashboard.php');
+            header('Location: ../superadmin/super_ad_dash.php');
         }
         exit;
     } else {
@@ -190,9 +190,9 @@ if (isset($conn)) {
             width: fit-content;
         }
         .brand-link img {
-            height: 44px;
+            height: 100px;
             width: auto;
-            filter: brightness(0) invert(1);
+        
         }
 
         .panel-quote { color: #fff; }
@@ -474,11 +474,14 @@ if (isset($conn)) {
             </div>
 
             <!-- Remember -->
-            <div class="remember-row">
-                <label class="check-label">
-                    <input type="checkbox" name="remember"> Remember me
-                </label>
-            </div>
+        <div class="remember-row">
+    <label class="check-label">
+        <input type="checkbox" name="remember"> Remember me
+    </label>
+    <a href="forgot_password.php" style="font-size:0.84rem;font-weight:700;color:var(--orange);text-decoration:none;">
+        Forgot password?
+    </a>
+</div>
 
             <button type="submit" class="btn-go">
                 <i class="bi bi-box-arrow-in-right me-2"></i>Log In
